@@ -354,19 +354,8 @@ class MikrotikService
         $action = $disable ? 'suspend' : 'restore';
         $status = $routerOk ? 'success' : 'failed';
 
-        \App\Models\InternetSuspensionLog::create([
-            'isp_id' => $customer->isp_id,
-            'customer_id' => $customer->id,
-            'invoice_id' => $customer->outstandingInvoices()->orderBy('due_date')->value('id'),
-            'router_id' => $customer->router_id,
-            'action' => $action,
-            'status' => $status,
-            'reason' => $disable ? 'unpaid_invoice' : 'payment_approved',
-            'message' => $message,
-            'performed_by' => app()->runningInConsole() ? 'system' : 'admin',
-            'user_id' => auth()->id(),
-        ]);
-
+        // The suspension lifecycle record is written by SuspensionService, which
+        // owns that table. Here we only record the router-level operation.
         $this->log($customer->router, $action, $status, $message, [
             'customer_id' => $customer->id,
             'ppp_username' => $customer->ppp_username,

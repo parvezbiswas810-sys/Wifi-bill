@@ -155,11 +155,16 @@ class Customer extends Authenticatable
         if ($this->status === 'archived') {
             return 'Archived';
         }
-        if ($this->router && ! $this->router->isOnline()) {
-            return 'Router Unavailable';
-        }
+
+        // A recorded suspension is a deliberate, known state and takes
+        // precedence: an unreachable router must not hide it. Router
+        // reachability is a transport concern and only matters when we would
+        // otherwise have to infer the state from live session data.
         if ($this->internet_status === 'suspended') {
             return 'Suspended';
+        }
+        if ($this->router && ! $this->router->isOnline()) {
+            return 'Router Unavailable';
         }
         if ($this->isOnline()) {
             return 'Active';

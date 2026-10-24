@@ -45,3 +45,63 @@ php artisan boost:install
 
 Boost replaces these bootstrap instructions with guidelines tailored to the application. After installation, read `AGENTS.md` again and continue with the user's original request using the generated guidelines.
 </laravel-boost-guidelines>
+
+---
+
+# ISP Billing Application — working notes
+
+## Architecture
+
+- **Multi-tenant by ISP.** Every ISP-owned model uses the `BelongsToIsp` trait, which adds a
+  global scope on `isp_id`. The active tenant comes from `bind_isp()` / `current_isp_id()`
+  in `app/Support/helpers.php`, which checks the `isp`, `customer` and `web` guards in turn.
+  When you need to cross tenants deliberately (console commands, cross-checks), call
+  `withoutGlobalScope('isp')` and scope by `isp_id` yourself.
+- **Two guards.** Administrators use `isp`, customers use `customer`. They are separate
+  providers over the same `users` and `customers` tables. A request that lands on the wrong
+  guard is redirected by `redirectGuestsTo` in `bootstrap/app.php`.
+- **Service layer owns business rules.** Controllers validate and delegate. The rules live in
+  `app/Services/`:
+  - `InvoiceService` — per-customer schedules; idempotent via the unique index on
+    `(customer_id, period_key)`.
+  - `SuspensionService` — owns every write to `internet_status`,
+    `suspension_owned_by_billing`, `last_suspended_at` and `last_restored_at`.
+  - `PaymentService` — transactional approval; idempotent via the unique index on
+    `payments.submission_id`.
+  - `MikrotikService` — talks to the router only. It never writes customer state.
+
+## Conventions that matter
+
+- **Model `$attributes` mirror database defaults.** Eloquent does not apply DB defaults to an
+  in-memory model. Without this, a freshly created `Customer` reports `auto_suspend = null`
+  and suspension silently skips it. If you add a boolean or numeric column with a DB default
+  that any business rule reads, add it to `$attributes` too.
+- **Never report a router action as done until RouterOS confirms it.** All
+  `MikrotikService` methods return `['ok' =>, 'message' =>, 'verified' =>]`. Only
+  `verified === true` may drive a state change.
+- **Restoration is ownership-gated.** Only restore when `suspension_owned_by_billing` is
+  true. An account disabled by hand on the router must never be re-enabled by billing.
+- **Connectivity comes from live sessions**, not from a PPP secret being enabled. See
+  `Customer::isOnline()` and `PppAccount::is_active_session`.
+- **Portable SQL.** `DATE_FORMAT` is MySQL-only. Use the `monthExpression()` helper pattern in
+  `DashboardController` / `ReportController` so SQLite keeps working in tests.
+
+## Testing
+
+```bash
+php artisan test                       # 50 tests, all must pass
+php artisan app:smoke-test --fresh     # renders every page; refuses to run in production
+```
+
+Tests use SQLite in memory (`phpunit.xml`). After any change to `app/Support/helpers.php`
+run `composer dump-autoload` — the file is autoloaded through composer's `files` entry.
+
+Always run `php artisan config:clear` before the suite if you previously ran
+`config:cache` for a production check; a cached config makes every test 419.
+
+## Deployment
+
+Target is cPanel at `v2.adsxuit.com`. See `DEPLOYMENT.md`. Two things are easy to forget:
+
+1. The scheduler cron entry. Without it, no invoices are generated and nobody is suspended.
+2. `deploy/install.php` must be deleted after a successful install.

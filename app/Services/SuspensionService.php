@@ -108,6 +108,20 @@ class SuspensionService
             ])->save();
         }
 
+        // Every billing-driven attempt is recorded, successful or not, so a
+        // failure is visible in the admin log rather than silently lost.
+        InternetSuspensionLog::create([
+            'isp_id' => $customer->isp_id,
+            'customer_id' => $customer->id,
+            'invoice_id' => $invoice->id,
+            'router_id' => $customer->router_id,
+            'action' => 'suspend',
+            'status' => $result['verified'] ? 'success' : 'failed',
+            'reason' => 'unpaid_invoice',
+            'message' => $result['message'],
+            'performed_by' => 'system',
+        ]);
+
         if (! $result['verified']) {
             AppNotification::notifyAdmin(
                 $customer->isp_id,
@@ -185,6 +199,17 @@ class SuspensionService
                 'last_restored_at' => now(),
             ])->save();
         }
+
+        InternetSuspensionLog::create([
+            'isp_id' => $customer->isp_id,
+            'customer_id' => $customer->id,
+            'router_id' => $customer->router_id,
+            'action' => 'restore',
+            'status' => $result['verified'] ? 'success' : 'failed',
+            'reason' => 'payment_approved',
+            'message' => $result['message'],
+            'performed_by' => 'system',
+        ]);
 
         if (! $result['verified']) {
             AppNotification::notifyAdmin(
