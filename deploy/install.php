@@ -14,6 +14,8 @@
 declare(strict_types=1);
 
 // ---- 1. Change this token before uploading -------------------------------
+// Set to '' to disable the installer entirely. The check below refuses to run
+// while it is empty, so a leftover placeholder cannot be used.
 $INSTALL_TOKEN = 'CHANGE_ME_BEFORE_UPLOAD';
 
 // ---- 2. Pre-fill these values -------------------------------------------
@@ -28,9 +30,9 @@ $ADMIN_PASS  = '';   // leave blank to generate a random password
 
 // -------------------------------------------------------------------------
 
-if (($INSTALL_TOKEN === 'CHANGE_ME_BEFORE_UPLOAD') || ($_GET['token'] ?? '') !== $INSTALL_TOKEN) {
+if ($INSTALL_TOKEN === '' || ! hash_equals($INSTALL_TOKEN, (string) ($_GET['token'] ?? ''))) {
     http_response_code(403);
-    exit('Forbidden: set a token in install.php and pass it as ?token=');
+    exit('Forbidden: pass ?token= with the value configured in install.php');
 }
 
 $root = __DIR__;

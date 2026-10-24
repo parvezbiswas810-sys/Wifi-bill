@@ -24,8 +24,12 @@ return new class extends Migration
             $table->text('admin_note')->nullable();
             $table->foreignId('reviewed_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamp('reviewed_at')->nullable();
-            // Set once, when approval records the immutable payment row.
-            $table->foreignId('payment_id')->nullable()->constrained('payments')->nullOnDelete();
+            // Back-reference to the immutable payment row, set on approval.
+            // The foreign key is added in a later migration: payments itself
+            // references this table, so the constraint cannot be declared while
+            // payments does not exist yet. payments.submission_id (unique) is
+            // the authoritative link.
+            $table->foreignId('payment_id')->nullable();
             $table->timestamps();
 
             // Blocks the same transaction reference from being submitted twice.
