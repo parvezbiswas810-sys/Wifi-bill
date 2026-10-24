@@ -89,12 +89,25 @@ Boost replaces these bootstrap instructions with guidelines tailored to the appl
 ## Testing
 
 ```bash
-php artisan test                       # 50 tests, all must pass
+php artisan test                       # 55 tests, all must pass
 php artisan app:smoke-test --fresh     # renders every page; refuses to run in production
 ```
 
 Tests use SQLite in memory (`phpunit.xml`). After any change to `app/Support/helpers.php`
 run `composer dump-autoload` — the file is autoloaded through composer's `files` entry.
+
+**SQLite hides MySQL-only failures, so a green suite does not mean the install works.**
+Two shipped bugs proved this, both fatal on the cPanel target and invisible locally:
+
+1. A **circular foreign key** (`payment_submissions.payment_id` ↔ `payments.submission_id`)
+   declared on both tables at creation time. MySQL refuses it with errno 150 and `migrate`
+   dies partway; SQLite accepts it silently. A cycle must be broken by creating one column
+   bare and attaching its constraint in a later migration.
+2. `key:generate` and similar commands read `$_ENV` before `$_SERVER`, and an exported
+   `APP_KEY`/`APP_ENV`/`DB_CONNECTION` in the shell overrides `.env` entirely.
+
+Before declaring a release good, install from scratch into a real MySQL/MariaDB using the
+production credentials and exercise the billing and payment paths. See `DEPLOYMENT.md`.
 
 Always run `php artisan config:clear` before the suite if you previously ran
 `config:cache` for a production check; a cached config makes every test 419.
