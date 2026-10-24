@@ -132,6 +132,28 @@ class HttpWorkflowTest extends TestCase
         $this->get(route('customer.dashboard'))->assertOk();
     }
 
+    /**
+     * Resolving an authenticated Customer from a cold guard must not recurse.
+     *
+     * The isp global scope calls current_isp_id(), which asks the auth guard for
+     * the user, which loads Customer, which applies the scope again. Laravel
+     * caches the resolved user in memory, so actingAs() hides the cycle: the
+     * first request of a real session is the one that hangs. Reloading the user
+     * between requests reproduces that cold start.
+     */
+    public function test_customer_portal_survives_a_cold_guard_resolution(): void
+    {
+        $this->post('/', ['username' => 'httpcust', 'password' => 'custpass123'])
+            ->assertRedirect(route('customer.dashboard'));
+
+        foreach (['customer.dashboard', 'customer.invoices.index', 'customer.connection', 'customer.profile'] as $name) {
+            auth()->guard('customer')->forgetUser();
+            app()->forgetInstance('current_isp_id');
+
+            $this->get(route($name))->assertOk();
+        }
+    }
+
     public function test_admin_routes_reject_guests(): void
     {
         $this->get(route('admin.dashboard'))->assertRedirect();

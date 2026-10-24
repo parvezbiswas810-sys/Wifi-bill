@@ -17,13 +17,13 @@ declare(strict_types=1);
 $INSTALL_TOKEN = 'CHANGE_ME_BEFORE_UPLOAD';
 
 // ---- 2. Pre-fill these values -------------------------------------------
-$DB_DATABASE = 'youruser_wifi';
-$DB_USERNAME = 'youruser_wifi';
+$DB_DATABASE = 'adsxuitc_wifi';
+$DB_USERNAME = 'adsxuitc_wifi';
 $DB_PASSWORD = '';
 $APP_URL     = 'https://v2.adsxuit.com';
-$ISP_NAME    = 'My ISP';
+$ISP_NAME    = 'Adsxuit ISP';
 $ADMIN_USER  = 'admin';
-$ADMIN_EMAIL = 'admin@example.com';
+$ADMIN_EMAIL = 'admin@adsxuit.com';
 $ADMIN_PASS  = '';   // leave blank to generate a random password
 
 // -------------------------------------------------------------------------
@@ -34,8 +34,16 @@ if (($INSTALL_TOKEN === 'CHANGE_ME_BEFORE_UPLOAD') || ($_GET['token'] ?? '') !==
 }
 
 $root = __DIR__;
-if (is_dir($root.'/../vendor') && ! is_dir($root.'/vendor')) {
-    // install.php sits in the Laravel root in this deployment layout.
+
+// When the application lives outside the document root, install.php is copied
+// next to it. Walk up until composer.json is found.
+if (! file_exists($root.'/composer.json')) {
+    foreach ([__DIR__.'/../isp-app', __DIR__.'/..', dirname(__DIR__).'/isp-app'] as $candidate) {
+        if (file_exists($candidate.'/composer.json')) {
+            $root = realpath($candidate);
+            break;
+        }
+    }
 }
 
 header('Content-Type: text/plain; charset=utf-8');
@@ -75,6 +83,10 @@ step('.env file', function () use ($root, $DB_DATABASE, $DB_USERNAME, $DB_PASSWO
         'DB_DATABASE' => $DB_DATABASE,
         'DB_USERNAME' => $DB_USERNAME,
         'DB_PASSWORD' => $DB_PASSWORD,
+        'SESSION_DRIVER' => 'database',
+        'SESSION_SECURE_COOKIE' => 'true',
+        'CACHE_STORE' => 'database',
+        'QUEUE_CONNECTION' => 'database',
         'SEED_ISP_NAME' => '"'.$ISP_NAME.'"',
         'SEED_ADMIN_USERNAME' => $ADMIN_USER,
         'SEED_ADMIN_EMAIL' => $ADMIN_EMAIL,

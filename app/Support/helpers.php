@@ -18,13 +18,27 @@ if (! function_exists('current_isp_id')) {
             return $bound === null ? null : (int) $bound;
         }
 
-        // Check every guard: an admin uses "isp", a customer uses "customer",
-        // and the shared "web" guard may also hold the admin during a session.
-        foreach (['isp', 'customer', 'web'] as $guard) {
-            $user = auth()->guard($guard)->user();
-            if ($user && ! empty($user->isp_id)) {
-                return (int) $user->isp_id;
+        // Resolving an authenticated model triggers that model's isp global
+        // scope, which calls straight back into this function. Returning null
+        // on re-entry leaves the guard's own lookup unscoped - it is a
+        // primary-key fetch, so nothing crosses tenants - and breaks the cycle.
+        // SetCurrentIsp binds the real tenant immediately afterwards.
+        static $resolving = false;
+        if ($resolving) {
+            return null;
+        }
+
+        $resolving = true;
+
+        try {
+            foreach (['isp', 'customer', 'web'] as $guard) {
+                $user = auth()->guard($guard)->user();
+                if ($user && ! empty($user->isp_id)) {
+                    return (int) $user->isp_id;
+                }
             }
+        } finally {
+            $resolving = false;
         }
 
         return null;
