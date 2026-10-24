@@ -7,10 +7,16 @@ application key, runs migrations, seeds the first administrator and caches the c
 
 Before uploading:
 
-1. Change `$INSTALL_TOKEN` to a long random string.
+1. Change `$INSTALL_TOKEN` to a long random string. The installer refuses to run
+   while it is left empty, so it cannot be triggered by accident.
 2. Fill in the database name, user, password and the administrator details.
 3. Upload to the application root and open `/install.php?token=YOUR_TOKEN`.
 4. **Delete it immediately after the install finishes.**
+
+The version committed to git carries placeholder values, because the repository is
+public. `build.sh` injects the real token and database password into the staged copy
+before packing the tarball, so the shipped archive installs without hand-editing while
+the repository stays free of live credentials.
 
 ## `index.php` and `.htaccess`
 
