@@ -178,3 +178,27 @@ To verify a change end to end without browser access, upload a token-gated
 script into the document root, fetch it through `r.jina.ai`, then delete it.
 Booting the app inside such a script needs `vendor/autoload.php` *before*
 `bootstrap/app.php`.
+
+## RouterOS API: what a real router actually accepts
+
+The MikroTik client once connected and logged in fine but every command
+failed, which looked like a network problem. It was three protocol bugs.
+Verified against RouterOS 6.49.19 (CCR1036, tile):
+
+- Read commands must name the verb. `/system/resource` and `/ppp/secret`
+  return `!trap no such command`; `/system/resource/print` and
+  `/ppp/secret/print` work. `RouterosClient::normalizeCommand()` appends the
+  missing `/print`.
+- Query filters use `?`, not `=`. `/ppp/secret/print ?name=x` filters,
+  while `=name=x` is rejected with `unknown parameter` because `=` means
+  "set this attribute". `buildSentence()` picks the prefix from the command
+  verb: `?` for print/getall/get, `=` for add/set/remove.
+- RouterOS sends `!done` after `!trap`. Returning at the `!trap` leaves that
+  sentence in the socket, and the next command on the same connection reads
+  it as its own reply. The trap is remembered and raised once `!done` lands.
+
+`query()` and `each()` share `buildSentence()` and `parseAttributes()`; keep
+them in sync when touching the protocol.
+
+A router that answers TCP but reports `no such command` is not unreachable.
+Check the raw sentences before blaming the network.
