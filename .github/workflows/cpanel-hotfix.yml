@@ -42,7 +42,9 @@ jobs:
           set -u
           CP="https://cpanel.adsxuit.com:2083"
           AUTH="Authorization: cpanel adsxuitc:${TOKEN}"
+          # UAPI exposes no delete; the API2 fileop call is the supported route.
           for dir in /home/adsxuitc/v2.adsxuit.com /home/adsxuitc; do
+            args=()
             for f in _oh_a.txt _oh_b.txt _oh_c.php _oh_cronsetup.php _oh_dbg.php \
                      _oh_dbg.sh _oh_deploy1.php _oh_deploy2.php _oh_deploy3.php \
                      _oh_doc.php _oh_env.php _oh_err.php _oh_exec.php _oh_go.php \
@@ -50,10 +52,15 @@ jobs:
                      _oh_mk.php _oh_mods.php _oh_mods2.php _oh_ph.php _oh_ph2.php \
                      _oh_ph3.php _oh_r.php _oh_run.sh _oh_run2.sh _oh_clean.sh \
                      _oh_slog.php _oh_smoke.php _oh_t.php _oh_v2.php _oh_htaccess; do
-              curl -sk --max-time 60 -H "$AUTH" \
-                --data-urlencode "sourcefiles=${dir}/${f}" \
-                "$CP/execute/Fileman/delete_files" > /dev/null || true
+              args+=(--data-urlencode "sourcefiles=${dir}/${f}")
             done
+            curl -sk --max-time 90 -H "$AUTH" "${args[@]}" \
+              --data-urlencode "cpanel_jsonapi_user=adsxuitc" \
+              --data-urlencode "cpanel_jsonapi_apiversion=2" \
+              --data-urlencode "cpanel_jsonapi_module=Fileman" \
+              --data-urlencode "cpanel_jsonapi_func=fileop" \
+              --data-urlencode "op=unlink" \
+              "$CP/json-api/cpanel" > /dev/null || true
           done
           echo "helpers removed"
 
