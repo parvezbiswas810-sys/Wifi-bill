@@ -18,5 +18,15 @@ if (file_exists($maintenance = $appPath.'/storage/framework/maintenance.php')) {
 
 require $appPath.'/vendor/autoload.php';
 
-(require_once $appPath.'/bootstrap/app.php')
-    ->handleRequest(Illuminate\Http\Request::capture());
+$app = require_once $appPath.'/bootstrap/app.php';
+
+/*
+ * The application lives outside the document root, so its own public/ is not
+ * what the browser sees. Point Laravel's public path at the document root
+ * instead: @vite, asset() and the storage symlink then resolve against the
+ * files actually being served, and a redeploy that cleans the application
+ * directory can no longer take the compiled assets with it.
+ */
+$app->usePublicPath(__DIR__);
+
+$app->handleRequest(Illuminate\Http\Request::capture());
