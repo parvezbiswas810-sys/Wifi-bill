@@ -153,15 +153,11 @@ class RouterosClient
      */
     public function query(string $command, array $attributes = []): array
     {
-        $sentence = [$command];
-        foreach ($attributes as $key => $value) {
-            $sentence[] = '='.$key.'='.$value;
-        }
-
-        $this->writeSentence($sentence);
+        $this->writeSentence($this->buildSentence($command, $attributes));
 
         $rows = [];
         $current = [];
+        $trap = null;
         $deadline = time() + max($this->timeout, 5);
 
         while (true) {
@@ -183,14 +179,7 @@ class RouterosClient
                     $current = [];
                 }
 
-                foreach (array_slice($reply, 1) as $word) {
-                    if (str_starts_with($word, '=')) {
-                        $eq = strpos($word, '=', 1);
-                        if ($eq !== false) {
-                            $current[substr($word, 1, $eq - 1)] = substr($word, $eq + 1);
-                        }
-                    }
-                }
+                $current = array_merge($current, $this->parseAttributes($reply));
 
                 continue;
             }
@@ -200,11 +189,25 @@ class RouterosClient
                     $rows[] = $current;
                 }
 
+                // RouterOS sends !done after !trap as well. Keep reading until
+                // it arrives before failing, otherwise the leftover sentence
+                // is mistaken for the next command's reply on this socket.
+                if ($trap !== null) {
+                    throw new RouterosException($trap);
+                }
+
                 return $rows;
             }
 
-            if ($tag === '!trap' || $tag === '!fatal') {
-                throw new RouterosException($this->trapMessage($reply, 'Router returned an error'));
+            if ($tag === '!trap') {
+                $trap ??= $this->trapMessage($reply, 'Router returned an error');
+
+                continue;
+            }
+
+            if ($tag === '!fatal') {
+                // A fatal reply closes the connection, so there is no !done.
+                throw new RouterosException($this->trapMessage($reply, 'Router returned a fatal error'));
             }
         }
     }
@@ -220,14 +223,11 @@ class RouterosClient
     /** Reads every row of a large reply, streaming rows to a callback. */
     public function each(string $command, array $attributes, callable $callback): int
     {
-        $sentence = [$command];
-        foreach ($attributes as $key => $value) {
-            $sentence[] = '='.$key.'='.$value;
-        }
-        $this->writeSentence($sentence);
+        $this->writeSentence($this->buildSentence($command, $attributes));
 
         $count = 0;
         $current = [];
+        $trap = null;
 
         while (true) {
             $reply = $this->readSentence();
@@ -243,14 +243,7 @@ class RouterosClient
                     $current = [];
                 }
 
-                foreach (array_slice($reply, 1) as $word) {
-                    if (str_starts_with($word, '=')) {
-                        $eq = strpos($word, '=', 1);
-                        if ($eq !== false) {
-                            $current[substr($word, 1, $eq - 1)] = substr($word, $eq + 1);
-                        }
-                    }
-                }
+                $current = array_merge($current, $this->parseAttributes($reply));
 
                 continue;
             }
@@ -261,13 +254,93 @@ class RouterosClient
                     $count++;
                 }
 
+                if ($trap !== null) {
+                    throw new RouterosException($trap);
+                }
+
                 return $count;
             }
 
-            if ($reply[0] === '!trap' || $reply[0] === '!fatal') {
-                throw new RouterosException($this->trapMessage($reply, 'Router returned an error'));
+            if ($reply[0] === '!trap') {
+                $trap ??= $this->trapMessage($reply, 'Router returned an error');
+
+                continue;
+            }
+
+            if ($reply[0] === '!fatal') {
+                throw new RouterosException($this->trapMessage($reply, 'Router returned a fatal error'));
             }
         }
+    }
+
+    /**
+     * Builds the word list for one command.
+     *
+     * RouterOS distinguishes two prefix characters: `?` marks a query filter
+     * and `=` sets an attribute. Sending a filter with `=` is rejected as an
+     * unknown parameter, so callers pass plain key/value pairs and the right
+     * prefix is chosen here based on the command verb.
+     *
+     * @param  array<string, string|int>  $attributes
+     * @return array<int, string>
+     */
+    protected function buildSentence(string $command, array $attributes = []): array
+    {
+        $command = $this->normalizeCommand($command);
+        $sentence = [$command];
+
+        $verb = strtolower((string) substr(strrchr($command, '/'), 1));
+        $isQuery = in_array($verb, ['print', 'getall', 'get'], true);
+
+        foreach ($attributes as $key => $value) {
+            $sentence[] = ($isQuery ? '?' : '=').$key.'='.$value;
+        }
+
+        return $sentence;
+    }
+
+    /**
+     * Appends the implicit `/print` verb.
+     *
+     * RouterOS 6 rejects a bare menu path such as `/system/resource` with
+     * "no such command"; the read verb must be explicit. Commands that already
+     * name an action are left untouched.
+     */
+    protected function normalizeCommand(string $command): string
+    {
+        $verbs = ['add', 'set', 'remove', 'print', 'getall', 'get', 'enable', 'disable',
+            'move', 'unset', 'export', 'import', 'monitor', 'login', 'logout', 'reboot',
+            'reset', 'find', 'check', 'edit'];
+
+        $verb = strtolower((string) substr(strrchr($command, '/'), 1));
+
+        if (in_array($verb, $verbs, true)) {
+            return $command;
+        }
+
+        return rtrim($command, '/').'/print';
+    }
+
+    /**
+     * @param  array<int, string>  $sentence
+     * @return array<string, string>
+     */
+    protected function parseAttributes(array $sentence): array
+    {
+        $attributes = [];
+
+        foreach (array_slice($sentence, 1) as $word) {
+            if (! str_starts_with($word, '=')) {
+                continue;
+            }
+
+            $eq = strpos($word, '=', 1);
+            if ($eq !== false) {
+                $attributes[substr($word, 1, $eq - 1)] = substr($word, $eq + 1);
+            }
+        }
+
+        return $attributes;
     }
 
     /** @param array<int, string> $words */

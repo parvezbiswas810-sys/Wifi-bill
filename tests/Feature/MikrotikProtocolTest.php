@@ -56,8 +56,10 @@ class MikrotikProtocolTest extends TestCase
     {
         [$clientSocket, $serverSocket] = $this->socketPair();
 
-        // The server answers with a trap instead of a result.
+        // RouterOS sends !done after !trap; the client must drain it so the
+        // socket is left clean for the next command on this connection.
         $this->writeSentence($serverSocket, ['!trap', '=message=no such item']);
+        $this->writeSentence($serverSocket, ['!done']);
 
         $client = new class('127.0.0.1', 0) extends RouterosClient
         {
@@ -75,6 +77,96 @@ class MikrotikProtocolTest extends TestCase
         $this->expectException(RouterosException::class);
         $this->expectExceptionMessage('no such item');
         $client->queryRaw();
+    }
+
+    /**
+     * A bare menu path such as /system/resource is rejected by RouterOS 6 with
+     * "no such command", so the client must append the implicit read verb.
+     */
+    public function test_bare_menu_paths_gain_the_print_verb(): void
+    {
+        $client = new class('127.0.0.1', 0) extends RouterosClient
+        {
+            public function sentence(string $command, array $attributes = []): array
+            {
+                return $this->buildSentence($command, $attributes);
+            }
+        };
+
+        $this->assertSame(['/system/resource/print'], $client->sentence('/system/resource'));
+        $this->assertSame(['/system/identity/print'], $client->sentence('/system/identity'));
+        $this->assertSame(['/ppp/secret/print'], $client->sentence('/ppp/secret'));
+        $this->assertSame(['/ppp/active/print'], $client->sentence('/ppp/active'));
+
+        // Commands that already name an action are left alone.
+        $this->assertSame(['/ppp/secret/set'], $client->sentence('/ppp/secret/set'));
+        $this->assertSame(['/system/resource/print'], $client->sentence('/system/resource/print'));
+    }
+
+    /**
+     * Query filters use the `?` prefix; `=` is rejected as an unknown
+     * parameter. Write commands keep `=`.
+     */
+    public function test_filters_use_the_query_prefix_on_read_commands(): void
+    {
+        $client = new class('127.0.0.1', 0) extends RouterosClient
+        {
+            public function sentence(string $command, array $attributes = []): array
+            {
+                return $this->buildSentence($command, $attributes);
+            }
+        };
+
+        $this->assertSame(
+            ['/ppp/secret/print', '?name=user1'],
+            $client->sentence('/ppp/secret', ['name' => 'user1'])
+        );
+
+        $this->assertSame(
+            ['/ppp/secret/set', '=.id=*1', '=disabled=yes'],
+            $client->sentence('/ppp/secret/set', ['.id' => '*1', 'disabled' => 'yes'])
+        );
+    }
+
+    public function test_trap_followed_by_done_still_returns_the_error(): void
+    {
+        [$clientSocket, $serverSocket] = $this->socketPair();
+
+        // First command traps. RouterOS still sends !done afterwards; if the
+        // client stops reading at !trap, that !done is left in the socket and
+        // is later mistaken for the next command's reply.
+        $this->writeSentence($serverSocket, ['!trap', '=message=no such command']);
+        $this->writeSentence($serverSocket, ['!done']);
+
+        $client = new class('127.0.0.1', 0) extends RouterosClient
+        {
+            public function queryRaw(string $command): array
+            {
+                return $this->query($command);
+            }
+        };
+
+        $reflection = new \ReflectionClass(RouterosClient::class);
+        $socketProp = $reflection->getProperty('socket');
+        $socketProp->setAccessible(true);
+        $socketProp->setValue($client, $clientSocket);
+
+        try {
+            $client->queryRaw('/system/resource');
+            $this->fail('Expected a RouterosException for the trap reply.');
+        } catch (RouterosException $e) {
+            $this->assertSame('no such command', $e->getMessage());
+        }
+
+        // A second command on the same connection must parse cleanly. This
+        // fails if the trailing !done from the trap was not consumed.
+        $this->writeSentence($serverSocket, ['!re', '=name=user1']);
+        $this->writeSentence($serverSocket, ['!done']);
+
+        $rows = $client->queryRaw('/ppp/secret/print');
+
+        $this->assertCount(1, $rows);
+        $this->assertSame('user1', $rows[0]['name']);
     }
 
     public function test_result_rows_are_parsed_into_associative_arrays(): void
