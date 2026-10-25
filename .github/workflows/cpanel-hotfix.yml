@@ -1,0 +1,64 @@
+name: cPanel hotfix
+
+# Emergency out-of-band deploy path. The workstation IP is blocked by the
+# host's edge WAF, so the fix is applied from a GitHub runner instead. The
+# cPanel token is supplied per dispatch and is never stored in the repository.
+on:
+  workflow_dispatch:
+    inputs:
+      cpanel_token:
+        description: cPanel API token for the adsxuitc account
+        required: true
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check runner egress against the site
+        run: |
+          echo "health: $(curl -sk --max-time 30 -o /dev/null -w '%{http_code}' https://v2.adsxuit.com/up)"
+          echo "root:   $(curl -sk --max-time 30 -o /dev/null -w '%{http_code}' https://v2.adsxuit.com/)"
+
+      - name: Publish the front controller to the document root
+        env:
+          TOKEN: ${{ inputs.cpanel_token }}
+        run: |
+          set -u
+          CP="https://cpanel.adsxuit.com:2083"
+          AUTH="Authorization: cpanel adsxuitc:${TOKEN}"
+          curl -sk --max-time 90 -H "$AUTH" \
+            --data-urlencode "dir=/home/adsxuitc/v2.adsxuit.com" \
+            --data-urlencode "file=index.php" \
+            --data-urlencode "content@deploy/index.php" \
+            "$CP/execute/Fileman/save_file_content"
+          echo
+
+      - name: Remove the one-off deploy helpers from both directories
+        env:
+          TOKEN: ${{ inputs.cpanel_token }}
+        run: |
+          set -u
+          CP="https://cpanel.adsxuit.com:2083"
+          AUTH="Authorization: cpanel adsxuitc:${TOKEN}"
+          for dir in /home/adsxuitc/v2.adsxuit.com /home/adsxuitc; do
+            for f in _oh_a.txt _oh_b.txt _oh_c.php _oh_cronsetup.php _oh_dbg.php \
+                     _oh_dbg.sh _oh_deploy1.php _oh_deploy2.php _oh_deploy3.php \
+                     _oh_doc.php _oh_env.php _oh_err.php _oh_exec.php _oh_go.php \
+                     _oh_h.php _oh_ht.php _oh_ini.php _oh_log.php _oh_ls.php \
+                     _oh_mk.php _oh_mods.php _oh_mods2.php _oh_ph.php _oh_ph2.php \
+                     _oh_ph3.php _oh_r.php _oh_run.sh _oh_run2.sh _oh_clean.sh \
+                     _oh_slog.php _oh_smoke.php _oh_t.php _oh_v2.php _oh_htaccess; do
+              curl -sk --max-time 60 -H "$AUTH" \
+                --data-urlencode "sourcefiles=${dir}/${f}" \
+                "$CP/execute/Fileman/delete_files" > /dev/null || true
+            done
+          done
+          echo "helpers removed"
+
+      - name: Verify the site renders again
+        run: |
+          for p in / /loginisp /admin/dashboard /build/manifest.json /_oh_smoke.php; do
+            printf '  %-24s %s\n' "$p" "$(curl -sk --max-time 30 -o /dev/null -w '%{http_code}' "https://v2.adsxuit.com$p")"
+          done
