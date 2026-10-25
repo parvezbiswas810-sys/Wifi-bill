@@ -118,3 +118,36 @@ Target is cPanel at `v2.adsxuit.com`. See `DEPLOYMENT.md`. Two things are easy t
 
 1. The scheduler cron entry. Without it, no invoices are generated and nobody is suspended.
 2. `deploy/install.php` must be deleted after a successful install.
+
+### Live deployment facts (cPanel, as installed)
+
+| Thing | Value |
+|---|---|
+| Account / home | `adsxuitc` / `/home/adsxuitc` |
+| Application | `/home/adsxuitc/isp-app` (outside the web root) |
+| Document root | `/home/adsxuitc/v2.adsxuit.com` |
+| PHP (web) | `ea-php84` via the `AddHandler` block in the docroot `.htaccess` |
+| PHP (CLI) | `/opt/alt/php84/usr/bin/php` with `PHP_INI_SCAN_DIR=/opt/alt/php84/etc/php.d.std` |
+| Scheduler | `* * * * * bash /home/adsxuitc/isp-app/cron-scheduler.sh` |
+
+Three traps that cost real time on the first deploy, all now documented in `DEPLOYMENT.md`:
+
+1. **CLI PHP loads almost no extensions.** The `/opt/alt/php84` binary reads an ini set
+   without `fileinfo`/`dom`, so `composer install` fails on platform requirements even
+   though the extensions exist. `PHP_INI_SCAN_DIR=/opt/alt/php84/etc/php.d.std` fixes it.
+   Composer also needs `HOME` and `COMPOSER_HOME` exported; `exec()` from a PHP script has
+   neither.
+2. **The web SAPI can run a different PHP than the CLI.** MultiPHP Manager reported
+   `ea-php84`, but the site executed 8.0.30 because the docroot `.htaccess` had no
+   cPanel-generated `AddHandler` block, so LiteSpeed used the server default. Composer's
+   `platform_check.php` then aborted every request with a 500. Setting the version through
+   `LangPHP::php_set_vhost_versions` is not enough on its own — the handler block is what
+   the running config actually reads.
+3. **`public/build` is gitignored.** A clone has no compiled assets, and `@vite` throws
+   "Vite manifest not found". Build locally (`npm run build`) and upload `public/build`
+   into the **document root** (`<docroot>/build`), not just into `isp-app/public/build` —
+   the docroot is what the browser reads.
+
+When repairing the docroot, remember that copying `deploy/.htaccess` over the live
+`.htaccess` drops the PHP handler and takes the site down with a version-mismatch 500.
+Re-apply the handler after any such copy.
