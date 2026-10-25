@@ -250,6 +250,70 @@ run `php artisan config:cache`.
 | Invoices not generated | Cron entry missing | Add the cron entry and confirm with `php artisan schedule:list` |
 | Session lost after login | `SESSION_SECURE_COOKIE=true` without HTTPS | Enable AutoSSL, or set the value to `false` while testing |
 | "SQLSTATE: too many connections" | Cron running too often | Keep the cron at one entry per minute |
+| `composer install` fails with `ext-fileinfo`/`ext-dom` missing | CloudLinux CLI PHP loads almost no extensions from the default ini set | Prefix commands with `PHP_INI_SCAN_DIR=/opt/alt/php84/etc/php.d.std` (see below) |
+| `composer` fails with "The HOME or COMPOSER_HOME environment variable must be set" | Cron/PHP `exec()` has no `HOME` | Export `HOME` and `COMPOSER_HOME` before running composer |
+| Every page 500s with "Your Composer dependencies require a PHP version >= 8.4.1. You are running 8.0.30" | The domain has no cPanel-generated PHP handler, so LiteSpeed falls back to the server default | Add the `AddHandler` block to the document root `.htaccess` (see below) |
+
+### CloudLinux CLI PHP loads almost no extensions
+
+On CloudLinux/cPanel hosts the `php` binary under `/opt/alt/` reads an ini set that omits
+most extensions, so `composer install` reports `ext-fileinfo`, `ext-dom` and others as
+missing even though they are installed. The full set lives in a parallel scan directory.
+Export it for the command:
+
+```bash
+export PHP_INI_SCAN_DIR=/opt/alt/php84/etc/php.d.std
+export HOME=/home/USERNAME
+export COMPOSER_HOME=/home/USERNAME/.composer
+/opt/alt/php84/usr/bin/php /usr/local/bin/composer install --no-dev --optimize-autoloader
+```
+
+Verify with `php -m | grep -E 'fileinfo|dom|phar'` before blaming the code.
+
+### The web server runs a different PHP version than the CLI
+
+MultiPHP Manager can report `ea-php84` for a domain while the site actually executes a
+different version, because the version is applied through a cPanel-generated handler
+block in the document root `.htaccess`. If that block is missing (common after moving
+files in by hand, or when the document root is outside `public_html`), LiteSpeed falls
+back to the server default and Composer's `platform_check.php` aborts every request.
+
+Confirm what the site is really running by requesting a temporary `phpinfo()`-style file,
+then make the handler explicit in the document root `.htaccess`:
+
+```apache
+# php -- BEGIN cPanel-generated handler, do not edit
+<IfModule mime_module>
+  AddHandler application/x-httpd-ea-php84 .php .php8 .phtml
+</IfModule>
+# php -- END cPanel-generated handler, do not edit
+```
+
+### The scheduler cron needs its own wrapper
+
+cPanel cron runs with a minimal environment, so `php artisan schedule:run` can pick the
+wrong binary or the reduced extension set. Point the cron entry at a small wrapper that
+pins everything:
+
+```bash
+#!/bin/bash
+export HOME=/home/USERNAME
+export PHP_INI_SCAN_DIR=/opt/alt/php84/etc/php.d.std
+cd /home/USERNAME/isp-app || exit 1
+exec /opt/alt/php84/usr/bin/php -d memory_limit=512M artisan schedule:run \
+  >> /home/USERNAME/isp-app/storage/logs/scheduler.log 2>&1
+```
+
+Then set the cron entry to `* * * * * bash /home/USERNAME/isp-app/cron-scheduler.sh`.
+Watch `storage/logs/scheduler.log` for one line per scheduled job per minute.
+
+### Aggressive WAFs block bulk requests from a single address
+
+Hosts running Imunify360 or Cloudflare in front of cPanel will challenge or block an
+address that issues many rapid requests (a deploy loop, a page-crawl smoke test). The
+site keeps working for real users; the block is per-address and lifts on its own. Prefer
+one batched request over many small ones, and keep a cPanel API token handy so cleanup
+can still be done through the control panel.
 
 ## Security hardening after install
 
